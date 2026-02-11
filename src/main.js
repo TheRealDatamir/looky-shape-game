@@ -6,12 +6,11 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 // ============================================
 const CONFIG = {
   // World
-  worldSize: 200, // Bigger play area
+  worldSize: 200,
   playerHeight: 5,
   
-  // Shapes
-  maxShapes: 100,
-  spawnPadding: 10,
+  // Shapes - this is the TARGET on-screen density
+  targetOnScreenShapes: 50,
   
   // Shape types with rarity weights (higher = more common)
   shapeTypes: {
@@ -25,9 +24,6 @@ const CONFIG = {
   // Movement
   walkSpeed: 60,
   runSpeed: 120,
-  
-  // Visibility buffer (extra margin before despawn)
-  visibilityBuffer: 0.15, // 15% extra margin on frustum
   
   // Collection zone
   collectionZoneRadius: 8
@@ -193,7 +189,109 @@ function getRandomShapeType() {
   return types[0];
 }
 
-function spawnShape(initialSpawn = false, nearPosition = null) {
+// ============================================
+// LOOK VELOCITY TRACKING
+// ============================================
+const lookVelocity = { x: 0, y: 0 };
+let lastCameraRotation = { x: 0, y: 0 };
+
+function updateLookVelocity() {
+  const currentRotation = {
+    x: camera.rotation.x,
+    y: camera.rotation.y
+  };
+  
+  // Calculate angular velocity (smoothed)
+  lookVelocity.x = lookVelocity.x * 0.7 + (currentRotation.x - lastCameraRotation.x) * 0.3;
+  lookVelocity.y = lookVelocity.y * 0.7 + (currentRotation.y - lastCameraRotation.y) * 0.3;
+  
+  lastCameraRotation.x = currentRotation.x;
+  lastCameraRotation.y = currentRotation.y;
+}
+
+// ============================================
+// SPAWN POSITIONS
+// ============================================
+
+// Get a position ON SCREEN (within the frustum)
+function getOnScreenPosition() {
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  const up = new THREE.Vector3(0, 1, 0);
+  
+  // Random distance in front of player
+  const distance = 15 + Math.random() * 50;
+  
+  // Random angle within FOV (75 degrees, so ±30 degrees to stay comfortably in view)
+  const hAngle = (Math.random() - 0.5) * 55 * Math.PI / 180;
+  const vAngle = (Math.random() - 0.5) * 35 * Math.PI / 180;
+  
+  const position = new THREE.Vector3()
+    .copy(camera.position)
+    .add(forward.clone().multiplyScalar(distance))
+    .add(right.clone().multiplyScalar(Math.tan(hAngle) * distance))
+    .add(up.clone().multiplyScalar(Math.tan(vAngle) * distance));
+  
+  // Override height to be in reasonable range
+  position.y = 1 + Math.random() * 20;
+  
+  // Clamp to world bounds
+  const bound = CONFIG.worldSize - 5;
+  position.x = Math.max(-bound, Math.min(bound, position.x));
+  position.z = Math.max(-bound, Math.min(bound, position.z));
+  
+  return position;
+}
+
+// Get a spawn position in the direction the player is looking/turning
+function getLookDirectionSpawnPosition() {
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  const up = new THREE.Vector3(0, 1, 0);
+  
+  // Distance from player - spawn at edge of view
+  const distance = 25 + Math.random() * 40;
+  
+  // Determine which side to spawn based on look velocity
+  let hAngle;
+  const velocityThreshold = 0.002;
+  
+  if (Math.abs(lookVelocity.y) > velocityThreshold) {
+    // Player is turning - spawn on the side they're turning towards
+    // At the edge of FOV (30-35 degrees from center) on the turning side
+    const edgeAngle = (28 + Math.random() * 7) * Math.PI / 180;
+    hAngle = lookVelocity.y > 0 ? -edgeAngle : edgeAngle; // Negative Y = turning left
+  } else {
+    // Not turning much - spawn randomly across the view, favoring edges
+    const side = Math.random() > 0.5 ? 1 : -1;
+    hAngle = side * (20 + Math.random() * 12) * Math.PI / 180;
+  }
+  
+  // Vertical angle - slight randomness
+  const vAngle = (Math.random() - 0.5) * 25 * Math.PI / 180;
+  
+  const position = new THREE.Vector3()
+    .copy(camera.position)
+    .add(forward.clone().multiplyScalar(distance))
+    .add(right.clone().multiplyScalar(Math.tan(hAngle) * distance))
+    .add(up.clone().multiplyScalar(Math.tan(vAngle) * distance));
+  
+  // Random height
+  position.y = 1 + Math.random() * 20;
+  
+  // Clamp to world bounds
+  const bound = CONFIG.worldSize - 5;
+  position.x = Math.max(-bound, Math.min(bound, position.x));
+  position.z = Math.max(-bound, Math.min(bound, position.z));
+  
+  return position;
+}
+
+// ============================================
+// SHAPE SPAWNING
+// ============================================
+
+function spawnShape(onScreen = true) {
   const type = getRandomShapeType();
   const config = CONFIG.shapeTypes[type];
   
@@ -206,32 +304,10 @@ function spawnShape(initialSpawn = false, nearPosition = null) {
   
   const mesh = new THREE.Mesh(geometry, material);
   
-  let position;
-  
-  if (initialSpawn) {
-    // Initial spawn: place anywhere in the world
-    const angle = Math.random() * Math.PI * 2;
-    const distance = CONFIG.spawnPadding + Math.random() * (CONFIG.worldSize - CONFIG.spawnPadding * 2);
-    position = new THREE.Vector3(
-      Math.cos(angle) * distance,
-      1 + Math.random() * 20, // Float between 1-21 units high
-      Math.sin(angle) * distance
-    );
-  } else if (nearPosition) {
-    // Spawn near the old position (with some random offset, staying off-screen)
-    position = getNearbyOffscreenPosition(nearPosition);
-  } else {
-    // Runtime spawn: spawn just outside the screen edge (not far away)
-    position = getEdgeSpawnPosition();
-  }
-  
+  // Position based on context
+  const position = onScreen ? getOnScreenPosition() : getLookDirectionSpawnPosition();
   mesh.position.copy(position);
   mesh.castShadow = true;
-  
-  // Shadow fade-in: start with no shadow, fade in over 5 seconds
-  mesh.userData.shadowFadeStart = performance.now();
-  mesh.userData.shadowFadeDuration = 5000; // 5 seconds
-  mesh.castShadow = false; // Start with shadow off
   
   mesh.rotation.set(
     Math.random() * Math.PI,
@@ -243,7 +319,6 @@ function spawnShape(initialSpawn = false, nearPosition = null) {
     type: type,
     size: config.size,
     name: config.name,
-    seen: false,
     rotationSpeed: {
       x: (Math.random() - 0.5) * 0.02,
       y: (Math.random() - 0.5) * 0.02,
@@ -267,140 +342,60 @@ function removeShape(shape) {
   }
 }
 
-// Frustum for visibility checking
+// ============================================
+// VISIBILITY & DENSITY MANAGEMENT
+// ============================================
+
 const frustum = new THREE.Frustum();
 const projScreenMatrix = new THREE.Matrix4();
 
-// Check if shape is visible (using bounding sphere for complete visibility check)
 function isShapeVisible(shape) {
   projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   frustum.setFromProjectionMatrix(projScreenMatrix);
   
-  // Compute bounding sphere if not already done
   if (!shape.geometry.boundingSphere) {
     shape.geometry.computeBoundingSphere();
   }
   
-  // Create a sphere at the shape's world position with the geometry's bounding radius
   const worldSphere = new THREE.Sphere(
     shape.position.clone(),
-    shape.geometry.boundingSphere.radius * 1.5 // Extra buffer for safety
+    shape.geometry.boundingSphere.radius * 1.5
   );
   
   return frustum.intersectsSphere(worldSphere);
 }
 
-// Check if a position is off-screen (for spawning)
-function isPositionOffScreen(position) {
-  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  frustum.setFromProjectionMatrix(projScreenMatrix);
-  
-  // Use a generous sphere to ensure spawn is well off-screen
-  const testSphere = new THREE.Sphere(position, 5);
-  return !frustum.intersectsSphere(testSphere);
-}
-
-// Get a spawn position near an old position but still off-screen
-function getNearbyOffscreenPosition(oldPosition) {
-  // Try positions near the old one
-  for (let attempt = 0; attempt < 20; attempt++) {
-    // Random offset from old position (5-15 units away)
-    const offsetDist = 5 + Math.random() * 10;
-    const offsetAngle = Math.random() * Math.PI * 2;
-    
-    const position = new THREE.Vector3(
-      oldPosition.x + Math.cos(offsetAngle) * offsetDist,
-      1 + Math.random() * 20,
-      oldPosition.z + Math.sin(offsetAngle) * offsetDist
-    );
-    
-    // Clamp to world bounds
-    const bound = CONFIG.worldSize - 5;
-    position.x = Math.max(-bound, Math.min(bound, position.x));
-    position.z = Math.max(-bound, Math.min(bound, position.z));
-    
-    // Check if off-screen
-    if (isPositionOffScreen(position)) {
-      return position;
-    }
-  }
-  
-  // Fallback to edge spawn if can't find nearby off-screen spot
-  return getEdgeSpawnPosition();
-}
-
-// Get a spawn position just outside the screen edge
-function getEdgeSpawnPosition() {
-  // Get camera direction vectors
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  
-  // Pick a random edge: 0=left, 1=right, 2=behind-left, 3=behind-right
-  const edge = Math.floor(Math.random() * 4);
-  
-  // Distance from player
-  const distance = 20 + Math.random() * 40;
-  
-  let position = new THREE.Vector3();
-  
-  // FOV is 75 degrees, half is 37.5. We want to spawn OUTSIDE this.
-  // Spawn at 50-90 degrees from forward (well outside the ~37.5 degree half-FOV)
-  const sideAngle = (50 + Math.random() * 40) * Math.PI / 180;
-  
-  switch (edge) {
-    case 0: // Left side (outside FOV)
-      position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
-        .add(right.clone().multiplyScalar(-Math.sin(sideAngle) * distance));
-      break;
-    case 1: // Right side (outside FOV)
-      position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
-        .add(right.clone().multiplyScalar(Math.sin(sideAngle) * distance));
-      break;
-    case 2: // Behind-left
-      position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(-distance * 0.5))
-        .add(right.clone().multiplyScalar(-distance * 0.5));
-      break;
-    case 3: // Behind-right
-      position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(-distance * 0.5))
-        .add(right.clone().multiplyScalar(distance * 0.5));
-      break;
-  }
-  
-  // Random height (higher range)
-  position.y = 1 + Math.random() * 20;
-  
-  // Clamp to world bounds
-  const bound = CONFIG.worldSize - 5;
-  position.x = Math.max(-bound, Math.min(bound, position.x));
-  position.z = Math.max(-bound, Math.min(bound, position.z));
-  
-  return position;
-}
-
-function updateShapeVisibility() {
-  const shapesToRemove = [];
-  
+function countVisibleShapes() {
+  let count = 0;
   for (const shape of state.shapes) {
-    if (shape === state.heldShape) continue; // Don't remove held shape
-    
-    const visible = isShapeVisible(shape);
-    
-    if (visible) {
-      shape.userData.seen = true;
-    } else if (shape.userData.seen) {
-      // Was seen, now not visible - mark for removal
-      shapesToRemove.push({ shape, position: shape.position.clone() });
+    if (isShapeVisible(shape)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function updateShapeDensity() {
+  // Remove shapes that went off-screen
+  const shapesToRemove = [];
+  for (const shape of state.shapes) {
+    if (shape === state.heldShape) continue;
+    if (!isShapeVisible(shape)) {
+      shapesToRemove.push(shape);
     }
   }
   
-  // Remove shapes and spawn new ones near their old positions
-  for (const { shape, position } of shapesToRemove) {
+  for (const shape of shapesToRemove) {
     removeShape(shape);
-    spawnShape(false, position); // Spawn near old position
+  }
+  
+  // Count how many are currently visible
+  const visibleCount = countVisibleShapes();
+  
+  // Spawn new shapes to maintain density
+  const needed = CONFIG.targetOnScreenShapes - visibleCount;
+  for (let i = 0; i < needed; i++) {
+    spawnShape(false); // Spawn in look direction
   }
 }
 
@@ -409,11 +404,10 @@ function updateShapeVisibility() {
 // ============================================
 
 const raycaster = new THREE.Raycaster();
-raycaster.far = 15; // Max pickup distance
+raycaster.far = 15;
 
 function tryPickupShape() {
   if (state.heldShape) {
-    // Drop the shape
     dropShape();
     return;
   }
@@ -430,13 +424,11 @@ function tryPickupShape() {
 function pickupShape(shape) {
   state.heldShape = shape;
   
-  // Remove from world shapes array (so it doesn't despawn)
   const index = state.shapes.indexOf(shape);
   if (index > -1) {
     state.shapes.splice(index, 1);
   }
   
-  // Update UI
   document.getElementById('held-indicator').style.display = 'block';
   document.getElementById('held-shape-name').textContent = shape.userData.name;
 }
@@ -446,19 +438,15 @@ function dropShape() {
   
   const shape = state.heldShape;
   
-  // Check if in collection zone
   const distToZone = new THREE.Vector2(
     shape.position.x - collectionZone.position.x,
     shape.position.z - collectionZone.position.z
   ).length();
   
   if (distToZone < CONFIG.collectionZoneRadius) {
-    // Collect the shape!
     collectShape(shape);
   } else {
-    // Just drop it back into the world
     state.shapes.push(shape);
-    shape.userData.seen = false; // Reset seen state
   }
   
   state.heldShape = null;
@@ -468,18 +456,12 @@ function dropShape() {
 function collectShape(shape) {
   const type = shape.userData.type;
   
-  // Add to collected
   state.collected[type] = (state.collected[type] || 0) + 1;
   
-  // Remove from scene
   scene.remove(shape);
   shape.geometry.dispose();
   shape.material.dispose();
   
-  // Spawn a replacement
-  spawnShape();
-  
-  // Update UI and check win
   updateRecipeUI();
   checkWinCondition();
 }
@@ -492,10 +474,8 @@ function generateRecipe(difficulty = 1) {
   const types = Object.keys(CONFIG.shapeTypes);
   const recipe = {};
   
-  // Number of different shape types needed (1-3 based on difficulty)
   const numTypes = Math.min(1 + Math.floor(difficulty / 2), 3);
   
-  // Shuffle and pick types
   const shuffled = types.sort(() => Math.random() - 0.5);
   for (let i = 0; i < numTypes; i++) {
     const type = shuffled[i];
@@ -537,7 +517,6 @@ function checkWinCondition() {
     }
   }
   
-  // Win!
   showWinMessage();
   return true;
 }
@@ -595,17 +574,14 @@ function updateMovement(delta) {
   controls.moveRight(-velocity.x * delta);
   controls.moveForward(-velocity.z * delta);
   
-  // Keep player in bounds
   const pos = camera.position;
   const bound = CONFIG.worldSize - 5;
   pos.x = Math.max(-bound, Math.min(bound, pos.x));
   pos.z = Math.max(-bound, Math.min(bound, pos.z));
   
-  // Fixed height
   pos.y = CONFIG.playerHeight;
 }
 
-// Update held shape position
 function updateHeldShape() {
   if (!state.heldShape) return;
   
@@ -689,48 +665,23 @@ window.addEventListener('resize', () => {
 // ANIMATION LOOP
 // ============================================
 
-// Spawn initial shapes (these can appear anywhere)
-for (let i = 0; i < CONFIG.maxShapes; i++) {
-  spawnShape(true); // initialSpawn = true
+// Spawn initial shapes ON SCREEN
+for (let i = 0; i < CONFIG.targetOnScreenShapes; i++) {
+  spawnShape(true);
 }
 
 // Generate first recipe
 state.recipe = generateRecipe(1);
 updateRecipeUI();
 
-// Animate shapes
 function animateShapes() {
-  const now = performance.now();
-  
   for (const shape of state.shapes) {
     shape.rotation.x += shape.userData.rotationSpeed.x;
     shape.rotation.y += shape.userData.rotationSpeed.y;
     shape.rotation.z += shape.userData.rotationSpeed.z;
-    
-    // Shadow fade-in
-    if (shape.userData.shadowFadeStart !== undefined) {
-      const elapsed = now - shape.userData.shadowFadeStart;
-      if (elapsed >= shape.userData.shadowFadeDuration) {
-        // Fade complete, enable shadow
-        shape.castShadow = true;
-        delete shape.userData.shadowFadeStart;
-        delete shape.userData.shadowFadeDuration;
-      }
-    }
-  }
-  
-  // Also update held shape shadow
-  if (state.heldShape && state.heldShape.userData.shadowFadeStart !== undefined) {
-    const elapsed = now - state.heldShape.userData.shadowFadeStart;
-    if (elapsed >= state.heldShape.userData.shadowFadeDuration) {
-      state.heldShape.castShadow = true;
-      delete state.heldShape.userData.shadowFadeStart;
-      delete state.heldShape.userData.shadowFadeDuration;
-    }
   }
 }
 
-// Animate collection zone
 function animateCollectionZone(time) {
   ring.material.emissiveIntensity = 0.5 + Math.sin(time * 3) * 0.5;
   collectionZone.material.opacity = 0.2 + Math.sin(time * 2) * 0.1;
@@ -745,8 +696,9 @@ function animate() {
   const time = clock.getElapsedTime();
   
   if (state.isPlaying) {
+    updateLookVelocity();
     updateMovement(delta);
-    updateShapeVisibility();
+    updateShapeDensity();
     updateHeldShape();
     updateZoneDistance();
     animateShapes();
