@@ -245,8 +245,9 @@ function getOnScreenPosition() {
 
 // Debug state
 const debugState = {
-  spawnDirection: 'none',
-  lastSpawnCount: 0
+  spawnDirection: 'NONE',
+  lastSpawnCount: 0,
+  lastDebugUpdate: 0
 };
 
 // Get a spawn position in the direction the player is looking/turning
@@ -258,43 +259,50 @@ function getLookDirectionSpawnPosition() {
   // Distance from player - spawn at edge of view
   const distance = 20 + Math.random() * 35;
   
-  // Determine which side to spawn based on look velocity
-  // Camera rotation: positive Y velocity = turning LEFT, negative Y velocity = turning RIGHT
-  let hAngle;
+  // Determine which SINGLE side to spawn on based on look velocity
+  // Compare horizontal vs vertical velocity to pick dominant direction
+  const absVelY = Math.abs(lookVelocity.y); // Horizontal turning
+  const absVelX = Math.abs(lookVelocity.x); // Vertical looking
   const velocityThreshold = 0.001;
   
-  if (Math.abs(lookVelocity.y) > velocityThreshold) {
-    // Player is turning - spawn on the side they're turning towards
-    // Edge of FOV is ~37.5 degrees (half of 75), spawn at 32-36 degrees
-    const edgeAngle = (32 + Math.random() * 4) * Math.PI / 180;
-    
-    if (lookVelocity.y > 0) {
-      // Turning LEFT - spawn on LEFT side
-      hAngle = -edgeAngle;
-      debugState.spawnDirection = 'LEFT';
+  let hAngle, vAngle;
+  const edgeAngle = (32 + Math.random() * 4) * Math.PI / 180;
+  
+  // Pick ONE direction based on which velocity is dominant
+  if (absVelY > velocityThreshold || absVelX > velocityThreshold) {
+    if (absVelY >= absVelX) {
+      // Horizontal movement is dominant
+      if (lookVelocity.y > 0) {
+        // Turning LEFT - spawn on LEFT
+        hAngle = -edgeAngle;
+        debugState.spawnDirection = 'LEFT';
+      } else {
+        // Turning RIGHT - spawn on RIGHT
+        hAngle = edgeAngle;
+        debugState.spawnDirection = 'RIGHT';
+      }
+      // Small random vertical variation
+      vAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
     } else {
-      // Turning RIGHT - spawn on RIGHT side
-      hAngle = edgeAngle;
-      debugState.spawnDirection = 'RIGHT';
+      // Vertical movement is dominant
+      if (lookVelocity.x > 0) {
+        // Looking DOWN - spawn at BOTTOM
+        vAngle = -edgeAngle * 0.6;
+        debugState.spawnDirection = 'BOTTOM';
+      } else {
+        // Looking UP - spawn at TOP
+        vAngle = edgeAngle * 0.6;
+        debugState.spawnDirection = 'TOP';
+      }
+      // Small random horizontal variation
+      hAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
     }
   } else {
-    // Not turning much - spawn randomly across the view
+    // Not moving much - spawn randomly
     const side = Math.random() > 0.5 ? 1 : -1;
     hAngle = side * (25 + Math.random() * 10) * Math.PI / 180;
-    debugState.spawnDirection = side > 0 ? 'right-random' : 'left-random';
-  }
-  
-  // Vertical angle - slight randomness, check for up/down look velocity
-  let vAngle = (Math.random() - 0.5) * 20 * Math.PI / 180;
-  if (Math.abs(lookVelocity.x) > velocityThreshold) {
-    const vEdgeAngle = (20 + Math.random() * 5) * Math.PI / 180;
-    if (lookVelocity.x > 0) {
-      vAngle = -vEdgeAngle; // Looking down, spawn lower
-      debugState.spawnDirection += '+DOWN';
-    } else {
-      vAngle = vEdgeAngle; // Looking up, spawn higher
-      debugState.spawnDirection += '+UP';
-    }
+    vAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
+    debugState.spawnDirection = 'RANDOM';
   }
   
   const position = new THREE.Vector3()
@@ -652,8 +660,14 @@ function updateZoneDistance() {
 }
 
 function updateDebugPanel() {
-  document.getElementById('debug-vel-y').textContent = lookVelocity.y.toFixed(4);
-  document.getElementById('debug-vel-x').textContent = lookVelocity.x.toFixed(4);
+  const now = performance.now();
+  // Only update every 200ms
+  if (now - debugState.lastDebugUpdate < 200) return;
+  debugState.lastDebugUpdate = now;
+  
+  // Scale up velocity by 1000 to make it readable
+  document.getElementById('debug-vel-y').textContent = (lookVelocity.y * 1000).toFixed(1);
+  document.getElementById('debug-vel-x').textContent = (lookVelocity.x * 1000).toFixed(1);
   document.getElementById('debug-spawn-dir').textContent = debugState.spawnDirection;
   document.getElementById('debug-on-screen').textContent = countVisibleShapes();
   document.getElementById('debug-last-spawn').textContent = debugState.lastSpawnCount;
