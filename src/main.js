@@ -243,6 +243,12 @@ function getOnScreenPosition() {
   return position;
 }
 
+// Debug state
+const debugState = {
+  spawnDirection: 'none',
+  lastSpawnCount: 0
+};
+
 // Get a spawn position in the direction the player is looking/turning
 function getLookDirectionSpawnPosition() {
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -250,25 +256,46 @@ function getLookDirectionSpawnPosition() {
   const up = new THREE.Vector3(0, 1, 0);
   
   // Distance from player - spawn at edge of view
-  const distance = 25 + Math.random() * 40;
+  const distance = 20 + Math.random() * 35;
   
   // Determine which side to spawn based on look velocity
+  // Camera rotation: positive Y velocity = turning LEFT, negative Y velocity = turning RIGHT
   let hAngle;
-  const velocityThreshold = 0.002;
+  const velocityThreshold = 0.001;
   
   if (Math.abs(lookVelocity.y) > velocityThreshold) {
     // Player is turning - spawn on the side they're turning towards
-    // At the edge of FOV (30-35 degrees from center) on the turning side
-    const edgeAngle = (28 + Math.random() * 7) * Math.PI / 180;
-    hAngle = lookVelocity.y > 0 ? -edgeAngle : edgeAngle; // Negative Y = turning left
+    // Edge of FOV is ~37.5 degrees (half of 75), spawn at 32-36 degrees
+    const edgeAngle = (32 + Math.random() * 4) * Math.PI / 180;
+    
+    if (lookVelocity.y > 0) {
+      // Turning LEFT - spawn on LEFT side
+      hAngle = -edgeAngle;
+      debugState.spawnDirection = 'LEFT';
+    } else {
+      // Turning RIGHT - spawn on RIGHT side
+      hAngle = edgeAngle;
+      debugState.spawnDirection = 'RIGHT';
+    }
   } else {
-    // Not turning much - spawn randomly across the view, favoring edges
+    // Not turning much - spawn randomly across the view
     const side = Math.random() > 0.5 ? 1 : -1;
-    hAngle = side * (20 + Math.random() * 12) * Math.PI / 180;
+    hAngle = side * (25 + Math.random() * 10) * Math.PI / 180;
+    debugState.spawnDirection = side > 0 ? 'right-random' : 'left-random';
   }
   
-  // Vertical angle - slight randomness
-  const vAngle = (Math.random() - 0.5) * 25 * Math.PI / 180;
+  // Vertical angle - slight randomness, check for up/down look velocity
+  let vAngle = (Math.random() - 0.5) * 20 * Math.PI / 180;
+  if (Math.abs(lookVelocity.x) > velocityThreshold) {
+    const vEdgeAngle = (20 + Math.random() * 5) * Math.PI / 180;
+    if (lookVelocity.x > 0) {
+      vAngle = -vEdgeAngle; // Looking down, spawn lower
+      debugState.spawnDirection += '+DOWN';
+    } else {
+      vAngle = vEdgeAngle; // Looking up, spawn higher
+      debugState.spawnDirection += '+UP';
+    }
+  }
   
   const position = new THREE.Vector3()
     .copy(camera.position)
@@ -394,6 +421,8 @@ function updateShapeDensity() {
   
   // Spawn new shapes to maintain density
   const needed = CONFIG.targetOnScreenShapes - visibleCount;
+  debugState.lastSpawnCount = needed;
+  
   for (let i = 0; i < needed; i++) {
     spawnShape(false); // Spawn in look direction
   }
@@ -517,12 +546,32 @@ function checkWinCondition() {
     }
   }
   
-  showWinMessage();
+  // Recipe complete! Show popup and auto-advance
+  showRecipeCompletePopup();
   return true;
 }
 
 let currentDifficulty = 1;
 
+function showRecipeCompletePopup() {
+  const popup = document.getElementById('recipe-complete-popup');
+  popup.classList.add('show');
+  
+  // After 2 seconds, start next recipe and fade out
+  setTimeout(() => {
+    currentDifficulty++;
+    state.recipe = generateRecipe(currentDifficulty);
+    state.collected = {};
+    updateRecipeUI();
+    
+    // Fade out popup
+    setTimeout(() => {
+      popup.classList.remove('show');
+    }, 500);
+  }, 2000);
+}
+
+// Keep old functions for compatibility but they won't be used
 function showWinMessage() {
   document.getElementById('win-message').style.display = 'block';
   controls.unlock();
@@ -600,6 +649,14 @@ function updateHeldShape() {
 function updateZoneDistance() {
   const dist = camera.position.distanceTo(collectionZone.position);
   document.getElementById('zone-distance').textContent = dist.toFixed(0);
+}
+
+function updateDebugPanel() {
+  document.getElementById('debug-vel-y').textContent = lookVelocity.y.toFixed(4);
+  document.getElementById('debug-vel-x').textContent = lookVelocity.x.toFixed(4);
+  document.getElementById('debug-spawn-dir').textContent = debugState.spawnDirection;
+  document.getElementById('debug-on-screen').textContent = countVisibleShapes();
+  document.getElementById('debug-last-spawn').textContent = debugState.lastSpawnCount;
 }
 
 // ============================================
@@ -702,6 +759,7 @@ function animate() {
     updateHeldShape();
     updateZoneDistance();
     animateShapes();
+    updateDebugPanel();
   }
   
   animateCollectionZone(time);

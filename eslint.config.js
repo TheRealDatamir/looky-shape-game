@@ -11,7 +11,8 @@ export default [
         document: 'readonly',
         console: 'readonly',
         requestAnimationFrame: 'readonly',
-        performance: 'readonly'
+        performance: 'readonly',
+        setTimeout: 'readonly'
       }
     },
     rules: {

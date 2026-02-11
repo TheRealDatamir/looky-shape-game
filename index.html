@@ -198,6 +198,44 @@
       color: #000;
       font-weight: bold;
     }
+    
+    #recipe-complete-popup {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #ffd700;
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 20px;
+      font-weight: bold;
+      z-index: 150;
+      opacity: 0;
+      transition: opacity 0.5s;
+      pointer-events: none;
+    }
+    
+    #recipe-complete-popup.show {
+      opacity: 1;
+    }
+    
+    #debug-panel {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.8);
+      color: #0f0;
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 12px;
+      z-index: 100;
+    }
+    
+    #debug-panel div {
+      margin: 3px 0;
+    }
   </style>
 </head>
 <body>
@@ -237,6 +275,18 @@
     <h1>🎉 Recipe Complete! 🎉</h1>
     <p>Get ready for the next one...</p>
     <button id="next-btn">Next Recipe</button>
+  </div>
+  
+  <div id="recipe-complete-popup">
+    🎉 Recipe Complete! Next recipe loading...
+  </div>
+  
+  <div id="debug-panel">
+    <div>Look Vel Y: <span id="debug-vel-y">0</span></div>
+    <div>Look Vel X: <span id="debug-vel-x">0</span></div>
+    <div>Spawn Dir: <span id="debug-spawn-dir">none</span></div>
+    <div>On Screen: <span id="debug-on-screen">0</span></div>
+    <div>Last Spawn: <span id="debug-last-spawn">0</span></div>
   </div>
   
   <script type="module" src="/src/main.js"></script>
