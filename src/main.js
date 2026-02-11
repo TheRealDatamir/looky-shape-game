@@ -52,26 +52,32 @@ const debugState = {
   lastDebugUpdate: 0
 };
 
-// Velocity tracking
+// Velocity tracking using mouse movement directly
 const lookVelocity = { x: 0, y: 0 };
-let lastCameraRotation = { x: 0, y: 0 };
+let mouseMoveDelta = { x: 0, y: 0 };
+
+// Capture raw mouse movement (this is the actual input)
+document.addEventListener('mousemove', (e) => {
+  if (controls.isLocked) {
+    // movementX = horizontal mouse movement (positive = right)
+    // movementY = vertical mouse movement (positive = down)
+    mouseMoveDelta.x += e.movementX;
+    mouseMoveDelta.y += e.movementY;
+  }
+});
 
 function updateLookVelocity() {
-  const currentRotation = {
-    x: camera.rotation.x,
-    y: camera.rotation.y
-  };
+  // Use accumulated mouse movement as velocity
+  // Positive X = turning RIGHT, Negative X = turning LEFT
+  // Positive Y = looking DOWN, Negative Y = looking UP
   
-  // Raw velocity (change in rotation this frame)
-  const rawVelX = currentRotation.x - lastCameraRotation.x;
-  const rawVelY = currentRotation.y - lastCameraRotation.y;
+  // Smooth it and scale
+  lookVelocity.x = lookVelocity.x * 0.3 + mouseMoveDelta.x * 0.7;
+  lookVelocity.y = lookVelocity.y * 0.3 + mouseMoveDelta.y * 0.7;
   
-  // Smooth it slightly (0.5 blend)
-  lookVelocity.x = lookVelocity.x * 0.5 + rawVelX * 0.5;
-  lookVelocity.y = lookVelocity.y * 0.5 + rawVelY * 0.5;
-  
-  lastCameraRotation.x = currentRotation.x;
-  lastCameraRotation.y = currentRotation.y;
+  // Reset delta for next frame
+  mouseMoveDelta.x = 0;
+  mouseMoveDelta.y = 0;
 }
 
 // Velocity gizmo drawing
@@ -98,10 +104,11 @@ function drawVelocityGizmo() {
   gizmoCtx.stroke();
   
   // Draw velocity vector
-  // Scale up the velocity for visibility
-  const scale = 5000;
-  const velX = lookVelocity.y * scale; // Y rotation = horizontal movement
-  const velY = -lookVelocity.x * scale; // X rotation = vertical movement (inverted)
+  // lookVelocity.x = horizontal mouse movement (right = positive)
+  // lookVelocity.y = vertical mouse movement (down = positive)
+  const scale = 3;
+  const velX = lookVelocity.x * scale;  // Horizontal: right is positive
+  const velY = lookVelocity.y * scale;  // Vertical: down is positive
   
   // Clamp max length
   const maxLen = 80;
@@ -724,9 +731,9 @@ function updateDebugPanel() {
   if (now - debugState.lastDebugUpdate < 200) return;
   debugState.lastDebugUpdate = now;
   
-  // Scale velocities for readability
-  document.getElementById('debug-vel-y').textContent = (lookVelocity.y * 1000).toFixed(2);
-  document.getElementById('debug-vel-x').textContent = (lookVelocity.x * 1000).toFixed(2);
+  // Show velocities - X = horizontal (left/right), Y = vertical (up/down)
+  document.getElementById('debug-vel-y').textContent = lookVelocity.x.toFixed(1) + ' (H)';
+  document.getElementById('debug-vel-x').textContent = lookVelocity.y.toFixed(1) + ' (V)';
   document.getElementById('debug-spawn-dir').textContent = debugState.spawnEdge;
   document.getElementById('debug-on-screen').textContent = debugState.visibleCount;
   document.getElementById('debug-last-spawn').textContent = debugState.lastSpawnCount;
