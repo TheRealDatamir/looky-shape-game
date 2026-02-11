@@ -340,63 +340,85 @@ function isShapeVisible(shape) {
          pos.z >= 0 && pos.z <= 1;
 }
 
-// Get spawn position at a random edge of the screen
+// Check if a position is off-screen
+function isPositionOffScreen(position) {
+  const pos = position.clone();
+  pos.project(camera);
+  
+  // Must be outside the visible area and in front of camera
+  const isOff = pos.x < -1.1 || pos.x > 1.1 || pos.y < -1.1 || pos.y > 1.1;
+  const isInFront = pos.z >= 0 && pos.z <= 1;
+  
+  return isOff && isInFront;
+}
+
+// Get spawn position at a random edge of the screen (guaranteed off-screen)
 function getEdgeSpawnPosition() {
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+  const bound = CONFIG.worldSize - 5;
   
-  // Distance from camera
-  const distance = 20 + Math.random() * 40;
-  
-  // Pick an edge: 0=left, 1=right, 2=top, 3=bottom
-  const edge = Math.floor(Math.random() * 4);
-  
-  // Calculate angle just outside the frustum edge
-  const hFovEdge = halfFovRad + edgeBufferRad; // Horizontal edge + buffer
-  const vFovEdge = (halfFovRad * 0.6) + edgeBufferRad; // Vertical is narrower due to aspect ratio
-  
-  let hAngle = 0;
-  let vAngle = 0;
-  
-  switch (edge) {
-    case 0: // LEFT edge
-      hAngle = -hFovEdge - (Math.random() * edgeBufferRad);
-      vAngle = (Math.random() - 0.5) * vFovEdge * 1.5;
-      debugState.spawnEdge = 'LEFT';
-      break;
-    case 1: // RIGHT edge
-      hAngle = hFovEdge + (Math.random() * edgeBufferRad);
-      vAngle = (Math.random() - 0.5) * vFovEdge * 1.5;
-      debugState.spawnEdge = 'RIGHT';
-      break;
-    case 2: // TOP edge
-      hAngle = (Math.random() - 0.5) * hFovEdge * 1.5;
-      vAngle = vFovEdge + (Math.random() * edgeBufferRad);
-      debugState.spawnEdge = 'TOP';
-      break;
-    case 3: // BOTTOM edge
-      hAngle = (Math.random() - 0.5) * hFovEdge * 1.5;
-      vAngle = -vFovEdge - (Math.random() * edgeBufferRad);
-      debugState.spawnEdge = 'BOTTOM';
-      break;
+  // Try up to 20 times to find a valid off-screen position
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    
+    // Distance from camera
+    const distance = 25 + Math.random() * 35;
+    
+    // Pick an edge: 0=left, 1=right, 2=behind-left, 3=behind-right
+    const edge = Math.floor(Math.random() * 4);
+    
+    let position = new THREE.Vector3();
+    
+    // Spawn well outside the FOV (50-90 degrees from forward)
+    const sideAngle = (50 + Math.random() * 40) * Math.PI / 180;
+    
+    switch (edge) {
+      case 0: // LEFT
+        position.copy(camera.position)
+          .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
+          .add(right.clone().multiplyScalar(-Math.sin(sideAngle) * distance));
+        debugState.spawnEdge = 'LEFT';
+        break;
+      case 1: // RIGHT
+        position.copy(camera.position)
+          .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
+          .add(right.clone().multiplyScalar(Math.sin(sideAngle) * distance));
+        debugState.spawnEdge = 'RIGHT';
+        break;
+      case 2: // BEHIND-LEFT
+        position.copy(camera.position)
+          .add(forward.clone().multiplyScalar(-distance * 0.3))
+          .add(right.clone().multiplyScalar(-distance * 0.7));
+        debugState.spawnEdge = 'BACK-L';
+        break;
+      case 3: // BEHIND-RIGHT
+        position.copy(camera.position)
+          .add(forward.clone().multiplyScalar(-distance * 0.3))
+          .add(right.clone().multiplyScalar(distance * 0.7));
+        debugState.spawnEdge = 'BACK-R';
+        break;
+    }
+    
+    // Set height
+    position.y = 1 + Math.random() * 20;
+    
+    // Clamp to world bounds
+    position.x = Math.max(-bound, Math.min(bound, position.x));
+    position.z = Math.max(-bound, Math.min(bound, position.z));
+    
+    // Verify it's actually off-screen
+    if (isPositionOffScreen(position)) {
+      return position;
+    }
   }
   
-  // Calculate world position
-  const position = new THREE.Vector3()
-    .copy(camera.position)
-    .add(forward.clone().multiplyScalar(distance))
-    .add(right.clone().multiplyScalar(Math.tan(hAngle) * distance))
-    .add(up.clone().multiplyScalar(Math.tan(vAngle) * distance));
-  
-  // Override Y for reasonable height
+  // Fallback: spawn behind the player
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const position = camera.position.clone().add(forward.multiplyScalar(-30));
   position.y = 1 + Math.random() * 20;
-  
-  // Clamp to world bounds
-  const bound = CONFIG.worldSize - 5;
   position.x = Math.max(-bound, Math.min(bound, position.x));
   position.z = Math.max(-bound, Math.min(bound, position.z));
-  
+  debugState.spawnEdge = 'BEHIND';
   return position;
 }
 
