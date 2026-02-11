@@ -9,8 +9,12 @@ const CONFIG = {
   worldSize: 200,
   playerHeight: 5,
   
-  // Shapes - this is the TARGET on-screen density
+  // Shapes - target on-screen density
   targetOnScreenShapes: 50,
+  
+  // Edge buffer - how far outside the screen edge to spawn/despawn
+  // This is in degrees from the frustum edge
+  edgeBufferDegrees: 5,
   
   // Shape types with rarity weights (higher = more common)
   shapeTypes: {
@@ -38,6 +42,14 @@ const state = {
   recipe: {},
   collected: {},
   isPlaying: false
+};
+
+// Debug state
+const debugState = {
+  spawnEdge: 'NONE',
+  lastSpawnCount: 0,
+  visibleCount: 0,
+  lastDebugUpdate: 0
 };
 
 // ============================================
@@ -190,49 +202,91 @@ function getRandomShapeType() {
 }
 
 // ============================================
-// LOOK VELOCITY TRACKING
+// FRUSTUM & EDGE SPAWN SYSTEM
 // ============================================
-const lookVelocity = { x: 0, y: 0 };
-let lastCameraRotation = { x: 0, y: 0 };
 
-function updateLookVelocity() {
-  const currentRotation = {
-    x: camera.rotation.x,
-    y: camera.rotation.y
-  };
+const frustum = new THREE.Frustum();
+const projScreenMatrix = new THREE.Matrix4();
+
+// Half FOV in radians
+const halfFovRad = (75 / 2) * Math.PI / 180; // ~37.5 degrees
+const edgeBufferRad = CONFIG.edgeBufferDegrees * Math.PI / 180;
+
+// Check if shape is within the DESPAWN zone (inside frustum + buffer)
+function isShapeInDespawnZone(shape) {
+  // Project shape position to screen space
+  const pos = shape.position.clone();
+  pos.project(camera);
   
-  // Calculate angular velocity (smoothed)
-  lookVelocity.x = lookVelocity.x * 0.7 + (currentRotation.x - lastCameraRotation.x) * 0.3;
-  lookVelocity.y = lookVelocity.y * 0.7 + (currentRotation.y - lastCameraRotation.y) * 0.3;
+  // pos.x and pos.y are now in range [-1, 1] if on screen
+  // We add buffer to allow shapes slightly outside screen
+  const buffer = 0.15; // ~15% buffer outside normalized screen coords
   
-  lastCameraRotation.x = currentRotation.x;
-  lastCameraRotation.y = currentRotation.y;
+  return pos.x >= -1 - buffer && pos.x <= 1 + buffer &&
+         pos.y >= -1 - buffer && pos.y <= 1 + buffer &&
+         pos.z >= 0 && pos.z <= 1; // In front of camera
 }
 
-// ============================================
-// SPAWN POSITIONS
-// ============================================
+// Check if shape is visible (for counting)
+function isShapeVisible(shape) {
+  const pos = shape.position.clone();
+  pos.project(camera);
+  
+  return pos.x >= -1 && pos.x <= 1 &&
+         pos.y >= -1 && pos.y <= 1 &&
+         pos.z >= 0 && pos.z <= 1;
+}
 
-// Get a position ON SCREEN (within the frustum)
-function getOnScreenPosition() {
+// Get spawn position at a random edge of the screen
+function getEdgeSpawnPosition() {
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  const up = new THREE.Vector3(0, 1, 0);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
   
-  // Random distance in front of player
-  const distance = 15 + Math.random() * 50;
+  // Distance from camera
+  const distance = 20 + Math.random() * 40;
   
-  // Random angle within FOV (75 degrees, so ±30 degrees to stay comfortably in view)
-  const hAngle = (Math.random() - 0.5) * 55 * Math.PI / 180;
-  const vAngle = (Math.random() - 0.5) * 35 * Math.PI / 180;
+  // Pick an edge: 0=left, 1=right, 2=top, 3=bottom
+  const edge = Math.floor(Math.random() * 4);
   
+  // Calculate angle just outside the frustum edge
+  const hFovEdge = halfFovRad + edgeBufferRad; // Horizontal edge + buffer
+  const vFovEdge = (halfFovRad * 0.6) + edgeBufferRad; // Vertical is narrower due to aspect ratio
+  
+  let hAngle = 0;
+  let vAngle = 0;
+  
+  switch (edge) {
+    case 0: // LEFT edge
+      hAngle = -hFovEdge - (Math.random() * edgeBufferRad);
+      vAngle = (Math.random() - 0.5) * vFovEdge * 1.5;
+      debugState.spawnEdge = 'LEFT';
+      break;
+    case 1: // RIGHT edge
+      hAngle = hFovEdge + (Math.random() * edgeBufferRad);
+      vAngle = (Math.random() - 0.5) * vFovEdge * 1.5;
+      debugState.spawnEdge = 'RIGHT';
+      break;
+    case 2: // TOP edge
+      hAngle = (Math.random() - 0.5) * hFovEdge * 1.5;
+      vAngle = vFovEdge + (Math.random() * edgeBufferRad);
+      debugState.spawnEdge = 'TOP';
+      break;
+    case 3: // BOTTOM edge
+      hAngle = (Math.random() - 0.5) * hFovEdge * 1.5;
+      vAngle = -vFovEdge - (Math.random() * edgeBufferRad);
+      debugState.spawnEdge = 'BOTTOM';
+      break;
+  }
+  
+  // Calculate world position
   const position = new THREE.Vector3()
     .copy(camera.position)
     .add(forward.clone().multiplyScalar(distance))
     .add(right.clone().multiplyScalar(Math.tan(hAngle) * distance))
     .add(up.clone().multiplyScalar(Math.tan(vAngle) * distance));
   
-  // Override height to be in reasonable range
+  // Override Y for reasonable height
   position.y = 1 + Math.random() * 20;
   
   // Clamp to world bounds
@@ -243,67 +297,17 @@ function getOnScreenPosition() {
   return position;
 }
 
-// Debug state
-const debugState = {
-  spawnDirection: 'NONE',
-  lastSpawnCount: 0,
-  lastDebugUpdate: 0
-};
-
-// Get a spawn position in the direction the player is looking/turning
-function getLookDirectionSpawnPosition() {
+// Get on-screen position (for initial spawn)
+function getOnScreenPosition() {
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  const up = new THREE.Vector3(0, 1, 0);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
   
-  // Distance from player - spawn at edge of view
-  const distance = 20 + Math.random() * 35;
+  const distance = 15 + Math.random() * 50;
   
-  // Determine which SINGLE side to spawn on based on look velocity
-  // Compare horizontal vs vertical velocity to pick dominant direction
-  const absVelY = Math.abs(lookVelocity.y); // Horizontal turning
-  const absVelX = Math.abs(lookVelocity.x); // Vertical looking
-  const velocityThreshold = 0.001;
-  
-  let hAngle, vAngle;
-  const edgeAngle = (32 + Math.random() * 4) * Math.PI / 180;
-  
-  // Pick ONE direction based on which velocity is dominant
-  if (absVelY > velocityThreshold || absVelX > velocityThreshold) {
-    if (absVelY >= absVelX) {
-      // Horizontal movement is dominant
-      if (lookVelocity.y > 0) {
-        // Turning LEFT - spawn on LEFT
-        hAngle = -edgeAngle;
-        debugState.spawnDirection = 'LEFT';
-      } else {
-        // Turning RIGHT - spawn on RIGHT
-        hAngle = edgeAngle;
-        debugState.spawnDirection = 'RIGHT';
-      }
-      // Small random vertical variation
-      vAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
-    } else {
-      // Vertical movement is dominant
-      if (lookVelocity.x > 0) {
-        // Looking DOWN - spawn at BOTTOM
-        vAngle = -edgeAngle * 0.6;
-        debugState.spawnDirection = 'BOTTOM';
-      } else {
-        // Looking UP - spawn at TOP
-        vAngle = edgeAngle * 0.6;
-        debugState.spawnDirection = 'TOP';
-      }
-      // Small random horizontal variation
-      hAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
-    }
-  } else {
-    // Not moving much - spawn randomly
-    const side = Math.random() > 0.5 ? 1 : -1;
-    hAngle = side * (25 + Math.random() * 10) * Math.PI / 180;
-    vAngle = (Math.random() - 0.5) * 15 * Math.PI / 180;
-    debugState.spawnDirection = 'RANDOM';
-  }
+  // Random angle within FOV
+  const hAngle = (Math.random() - 0.5) * halfFovRad * 1.6;
+  const vAngle = (Math.random() - 0.5) * halfFovRad * 0.8;
   
   const position = new THREE.Vector3()
     .copy(camera.position)
@@ -311,10 +315,8 @@ function getLookDirectionSpawnPosition() {
     .add(right.clone().multiplyScalar(Math.tan(hAngle) * distance))
     .add(up.clone().multiplyScalar(Math.tan(vAngle) * distance));
   
-  // Random height
   position.y = 1 + Math.random() * 20;
   
-  // Clamp to world bounds
   const bound = CONFIG.worldSize - 5;
   position.x = Math.max(-bound, Math.min(bound, position.x));
   position.z = Math.max(-bound, Math.min(bound, position.z));
@@ -326,7 +328,7 @@ function getLookDirectionSpawnPosition() {
 // SHAPE SPAWNING
 // ============================================
 
-function spawnShape(onScreen = true) {
+function spawnShape(onScreen = false) {
   const type = getRandomShapeType();
   const config = CONFIG.shapeTypes[type];
   
@@ -339,8 +341,7 @@ function spawnShape(onScreen = true) {
   
   const mesh = new THREE.Mesh(geometry, material);
   
-  // Position based on context
-  const position = onScreen ? getOnScreenPosition() : getLookDirectionSpawnPosition();
+  const position = onScreen ? getOnScreenPosition() : getEdgeSpawnPosition();
   mesh.position.copy(position);
   mesh.castShadow = true;
   
@@ -378,27 +379,8 @@ function removeShape(shape) {
 }
 
 // ============================================
-// VISIBILITY & DENSITY MANAGEMENT
+// DENSITY MANAGEMENT
 // ============================================
-
-const frustum = new THREE.Frustum();
-const projScreenMatrix = new THREE.Matrix4();
-
-function isShapeVisible(shape) {
-  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  frustum.setFromProjectionMatrix(projScreenMatrix);
-  
-  if (!shape.geometry.boundingSphere) {
-    shape.geometry.computeBoundingSphere();
-  }
-  
-  const worldSphere = new THREE.Sphere(
-    shape.position.clone(),
-    shape.geometry.boundingSphere.radius * 1.5
-  );
-  
-  return frustum.intersectsSphere(worldSphere);
-}
 
 function countVisibleShapes() {
   let count = 0;
@@ -411,11 +393,11 @@ function countVisibleShapes() {
 }
 
 function updateShapeDensity() {
-  // Remove shapes that went off-screen
+  // Remove shapes that are outside the despawn zone
   const shapesToRemove = [];
   for (const shape of state.shapes) {
     if (shape === state.heldShape) continue;
-    if (!isShapeVisible(shape)) {
+    if (!isShapeInDespawnZone(shape)) {
       shapesToRemove.push(shape);
     }
   }
@@ -424,15 +406,15 @@ function updateShapeDensity() {
     removeShape(shape);
   }
   
-  // Count how many are currently visible
+  // Count visible and spawn to maintain density
   const visibleCount = countVisibleShapes();
+  debugState.visibleCount = visibleCount;
   
-  // Spawn new shapes to maintain density
   const needed = CONFIG.targetOnScreenShapes - visibleCount;
-  debugState.lastSpawnCount = needed;
+  debugState.lastSpawnCount = Math.max(0, needed);
   
   for (let i = 0; i < needed; i++) {
-    spawnShape(false); // Spawn in look direction
+    spawnShape(false); // Spawn at edge
   }
 }
 
@@ -554,7 +536,6 @@ function checkWinCondition() {
     }
   }
   
-  // Recipe complete! Show popup and auto-advance
   showRecipeCompletePopup();
   return true;
 }
@@ -565,33 +546,16 @@ function showRecipeCompletePopup() {
   const popup = document.getElementById('recipe-complete-popup');
   popup.classList.add('show');
   
-  // After 2 seconds, start next recipe and fade out
   setTimeout(() => {
     currentDifficulty++;
     state.recipe = generateRecipe(currentDifficulty);
     state.collected = {};
     updateRecipeUI();
     
-    // Fade out popup
     setTimeout(() => {
       popup.classList.remove('show');
     }, 500);
   }, 2000);
-}
-
-// Keep old functions for compatibility but they won't be used
-function showWinMessage() {
-  document.getElementById('win-message').style.display = 'block';
-  controls.unlock();
-}
-
-function startNextRecipe() {
-  currentDifficulty++;
-  state.recipe = generateRecipe(currentDifficulty);
-  state.collected = {};
-  updateRecipeUI();
-  document.getElementById('win-message').style.display = 'none';
-  controls.lock();
 }
 
 // ============================================
@@ -661,15 +625,13 @@ function updateZoneDistance() {
 
 function updateDebugPanel() {
   const now = performance.now();
-  // Only update every 200ms
   if (now - debugState.lastDebugUpdate < 200) return;
   debugState.lastDebugUpdate = now;
   
-  // Scale up velocity by 1000 to make it readable
-  document.getElementById('debug-vel-y').textContent = (lookVelocity.y * 1000).toFixed(1);
-  document.getElementById('debug-vel-x').textContent = (lookVelocity.x * 1000).toFixed(1);
-  document.getElementById('debug-spawn-dir').textContent = debugState.spawnDirection;
-  document.getElementById('debug-on-screen').textContent = countVisibleShapes();
+  document.getElementById('debug-vel-y').textContent = '-';
+  document.getElementById('debug-vel-x').textContent = '-';
+  document.getElementById('debug-spawn-dir').textContent = debugState.spawnEdge;
+  document.getElementById('debug-on-screen').textContent = debugState.visibleCount;
   document.getElementById('debug-last-spawn').textContent = debugState.lastSpawnCount;
 }
 
@@ -682,7 +644,12 @@ document.getElementById('start-btn').addEventListener('click', () => {
 });
 
 document.getElementById('next-btn').addEventListener('click', () => {
-  startNextRecipe();
+  currentDifficulty++;
+  state.recipe = generateRecipe(currentDifficulty);
+  state.collected = {};
+  updateRecipeUI();
+  document.getElementById('win-message').style.display = 'none';
+  controls.lock();
 });
 
 controls.addEventListener('lock', () => {
@@ -767,7 +734,6 @@ function animate() {
   const time = clock.getElapsedTime();
   
   if (state.isPlaying) {
-    updateLookVelocity();
     updateMovement(delta);
     updateShapeDensity();
     updateHeldShape();
