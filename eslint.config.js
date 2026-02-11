@@ -10,9 +10,7 @@ export default [
         window: 'readonly',
         document: 'readonly',
         console: 'readonly',
-        requestAnimationFrame: 'readonly',
-        performance: 'readonly',
-        setTimeout: 'readonly'
+        requestAnimationFrame: 'readonly'
       }
     },
     rules: {
