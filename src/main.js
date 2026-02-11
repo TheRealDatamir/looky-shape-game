@@ -23,7 +23,11 @@ const CONFIG = {
   },
   
   // Movement
-  moveSpeed: 30,
+  walkSpeed: 60,
+  runSpeed: 120,
+  
+  // Visibility buffer (extra margin before despawn)
+  visibilityBuffer: 0.15, // 15% extra margin on frustum
   
   // Collection zone
   collectionZoneRadius: 8
@@ -188,15 +192,21 @@ function spawnShape() {
   
   const mesh = new THREE.Mesh(geometry, material);
   
-  // Random position
-  const angle = Math.random() * Math.PI * 2;
-  const distance = CONFIG.spawnPadding + Math.random() * (CONFIG.worldSize - CONFIG.spawnPadding * 2);
+  // Find a position that's off-screen
+  let attempts = 0;
+  let position;
+  do {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = CONFIG.spawnPadding + Math.random() * (CONFIG.worldSize - CONFIG.spawnPadding * 2);
+    position = new THREE.Vector3(
+      Math.cos(angle) * distance,
+      1 + Math.random() * 4,
+      Math.sin(angle) * distance
+    );
+    attempts++;
+  } while (!isPositionOffScreen(position) && attempts < 50);
   
-  mesh.position.set(
-    Math.cos(angle) * distance,
-    1 + Math.random() * 4, // Float between 1-5 units high
-    Math.sin(angle) * distance
-  );
+  mesh.position.copy(position);
   
   mesh.rotation.set(
     Math.random() * Math.PI,
@@ -236,10 +246,33 @@ function removeShape(shape) {
 const frustum = new THREE.Frustum();
 const projScreenMatrix = new THREE.Matrix4();
 
+// Check if shape is visible (using bounding sphere for complete visibility check)
 function isShapeVisible(shape) {
   projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   frustum.setFromProjectionMatrix(projScreenMatrix);
-  return frustum.containsPoint(shape.position);
+  
+  // Compute bounding sphere if not already done
+  if (!shape.geometry.boundingSphere) {
+    shape.geometry.computeBoundingSphere();
+  }
+  
+  // Create a sphere at the shape's world position with the geometry's bounding radius
+  const worldSphere = new THREE.Sphere(
+    shape.position.clone(),
+    shape.geometry.boundingSphere.radius * 1.5 // Extra buffer for safety
+  );
+  
+  return frustum.intersectsSphere(worldSphere);
+}
+
+// Check if a position is off-screen (for spawning)
+function isPositionOffScreen(position) {
+  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  frustum.setFromProjectionMatrix(projScreenMatrix);
+  
+  // Use a generous sphere to ensure spawn is well off-screen
+  const testSphere = new THREE.Sphere(position, 5);
+  return !frustum.intersectsSphere(testSphere);
 }
 
 function updateShapeVisibility() {
@@ -427,7 +460,8 @@ const moveState = {
   forward: false,
   backward: false,
   left: false,
-  right: false
+  right: false,
+  sprint: false
 };
 
 const velocity = new THREE.Vector3();
@@ -435,6 +469,8 @@ const direction = new THREE.Vector3();
 
 function updateMovement(delta) {
   if (!controls.isLocked) return;
+  
+  const currentSpeed = moveState.sprint ? CONFIG.runSpeed : CONFIG.walkSpeed;
   
   velocity.x -= velocity.x * 10.0 * delta;
   velocity.z -= velocity.z * 10.0 * delta;
@@ -444,10 +480,10 @@ function updateMovement(delta) {
   direction.normalize();
   
   if (moveState.forward || moveState.backward) {
-    velocity.z -= direction.z * CONFIG.moveSpeed * delta;
+    velocity.z -= direction.z * currentSpeed * delta;
   }
   if (moveState.left || moveState.right) {
-    velocity.x -= direction.x * CONFIG.moveSpeed * delta;
+    velocity.x -= direction.x * currentSpeed * delta;
   }
   
   controls.moveRight(-velocity.x * delta);
@@ -515,6 +551,8 @@ document.addEventListener('keydown', (e) => {
     case 'KeyS': moveState.backward = true; break;
     case 'KeyA': moveState.left = true; break;
     case 'KeyD': moveState.right = true; break;
+    case 'ShiftLeft':
+    case 'ShiftRight': moveState.sprint = true; break;
   }
 });
 
@@ -524,6 +562,8 @@ document.addEventListener('keyup', (e) => {
     case 'KeyS': moveState.backward = false; break;
     case 'KeyA': moveState.left = false; break;
     case 'KeyD': moveState.right = false; break;
+    case 'ShiftLeft':
+    case 'ShiftRight': moveState.sprint = false; break;
   }
 });
 
