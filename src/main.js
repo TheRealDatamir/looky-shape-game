@@ -179,7 +179,7 @@ function getRandomShapeType() {
   return types[0];
 }
 
-function spawnShape() {
+function spawnShape(initialSpawn = false) {
   const type = getRandomShapeType();
   const config = CONFIG.shapeTypes[type];
   
@@ -192,19 +192,21 @@ function spawnShape() {
   
   const mesh = new THREE.Mesh(geometry, material);
   
-  // Find a position that's off-screen
-  let attempts = 0;
   let position;
-  do {
+  
+  if (initialSpawn) {
+    // Initial spawn: place anywhere in the world
     const angle = Math.random() * Math.PI * 2;
     const distance = CONFIG.spawnPadding + Math.random() * (CONFIG.worldSize - CONFIG.spawnPadding * 2);
     position = new THREE.Vector3(
       Math.cos(angle) * distance,
-      1 + Math.random() * 4,
+      1 + Math.random() * 10, // Float between 1-11 units high
       Math.sin(angle) * distance
     );
-    attempts++;
-  } while (!isPositionOffScreen(position) && attempts < 50);
+  } else {
+    // Runtime spawn: spawn just outside the screen edge (not far away)
+    position = getEdgeSpawnPosition();
+  }
   
   mesh.position.copy(position);
   
@@ -273,6 +275,67 @@ function isPositionOffScreen(position) {
   // Use a generous sphere to ensure spawn is well off-screen
   const testSphere = new THREE.Sphere(position, 5);
   return !frustum.intersectsSphere(testSphere);
+}
+
+// Get a spawn position just outside the screen edge
+function getEdgeSpawnPosition() {
+  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  frustum.setFromProjectionMatrix(projScreenMatrix);
+  
+  // Get camera forward direction
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  const up = new THREE.Vector3(0, 1, 0);
+  
+  // Pick a random edge: 0=left, 1=right, 2=top, 3=bottom
+  const edge = Math.floor(Math.random() * 4);
+  
+  // Distance from player (spawn relatively close, 15-40 units away)
+  const distance = 15 + Math.random() * 25;
+  
+  // Angle just outside frustum (FOV is 75, so half is ~37.5 degrees, add buffer)
+  const edgeAngle = (42 + Math.random() * 15) * Math.PI / 180; // 42-57 degrees from center
+  
+  let position = new THREE.Vector3();
+  
+  switch (edge) {
+    case 0: // Left edge
+      position.copy(camera.position)
+        .add(forward.clone().multiplyScalar(distance))
+        .add(right.clone().multiplyScalar(-Math.tan(edgeAngle) * distance));
+      break;
+    case 1: // Right edge
+      position.copy(camera.position)
+        .add(forward.clone().multiplyScalar(distance))
+        .add(right.clone().multiplyScalar(Math.tan(edgeAngle) * distance));
+      break;
+    case 2: // Top edge
+      position.copy(camera.position)
+        .add(forward.clone().multiplyScalar(distance))
+        .add(up.clone().multiplyScalar(Math.tan(edgeAngle) * distance * 0.6)); // Less vertical range
+      break;
+    case 3: // Bottom edge (rare, mostly ground)
+      position.copy(camera.position)
+        .add(forward.clone().multiplyScalar(distance))
+        .add(up.clone().multiplyScalar(-Math.tan(edgeAngle) * distance * 0.3));
+      break;
+  }
+  
+  // Random height variation
+  position.y = 1 + Math.random() * 10;
+  
+  // Clamp to world bounds
+  const bound = CONFIG.worldSize - 5;
+  position.x = Math.max(-bound, Math.min(bound, position.x));
+  position.z = Math.max(-bound, Math.min(bound, position.z));
+  
+  // If somehow on-screen, push it further out
+  if (!isPositionOffScreen(position)) {
+    const awayDir = position.clone().sub(camera.position).normalize();
+    position.add(awayDir.multiplyScalar(10));
+  }
+  
+  return position;
 }
 
 function updateShapeVisibility() {
@@ -583,9 +646,9 @@ window.addEventListener('resize', () => {
 // ANIMATION LOOP
 // ============================================
 
-// Spawn initial shapes
+// Spawn initial shapes (these can appear anywhere)
 for (let i = 0; i < CONFIG.maxShapes; i++) {
-  spawnShape();
+  spawnShape(true); // initialSpawn = true
 }
 
 // Generate first recipe
