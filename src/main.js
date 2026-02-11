@@ -6,7 +6,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 // ============================================
 const CONFIG = {
   // World
-  worldSize: 100, // 20x player height (assuming player ~5 units)
+  worldSize: 200, // Bigger play area
   playerHeight: 5,
   
   // Shapes
@@ -56,6 +56,8 @@ camera.position.set(0, CONFIG.playerHeight, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('game-container').appendChild(renderer.domElement);
 
 // Controls
@@ -67,6 +69,15 @@ scene.add(ambientLight);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(50, 100, 50);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.camera.near = 1;
+directionalLight.shadow.camera.far = 300;
+directionalLight.shadow.camera.left = -100;
+directionalLight.shadow.camera.right = 100;
+directionalLight.shadow.camera.top = 100;
+directionalLight.shadow.camera.bottom = -100;
 scene.add(directionalLight);
 
 // ============================================
@@ -82,6 +93,7 @@ const groundMaterial = new THREE.MeshStandardMaterial({
 const ground = new THREE.Mesh(groundGeometry, groundMaterial);
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = 0;
+ground.receiveShadow = true;
 scene.add(ground);
 
 // Decorative white shapes (non-collectible)
@@ -110,6 +122,8 @@ function createDecorations() {
       (Math.random() - 0.5) * CONFIG.worldSize * 1.8
     );
     mesh.rotation.y = Math.random() * Math.PI * 2;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     scene.add(mesh);
   }
 }
@@ -200,7 +214,7 @@ function spawnShape(initialSpawn = false) {
     const distance = CONFIG.spawnPadding + Math.random() * (CONFIG.worldSize - CONFIG.spawnPadding * 2);
     position = new THREE.Vector3(
       Math.cos(angle) * distance,
-      1 + Math.random() * 10, // Float between 1-11 units high
+      1 + Math.random() * 20, // Float between 1-21 units high
       Math.sin(angle) * distance
     );
   } else {
@@ -209,6 +223,7 @@ function spawnShape(initialSpawn = false) {
   }
   
   mesh.position.copy(position);
+  mesh.castShadow = true;
   
   mesh.rotation.set(
     Math.random() * Math.PI,
@@ -279,61 +294,52 @@ function isPositionOffScreen(position) {
 
 // Get a spawn position just outside the screen edge
 function getEdgeSpawnPosition() {
-  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  frustum.setFromProjectionMatrix(projScreenMatrix);
-  
-  // Get camera forward direction
+  // Get camera direction vectors
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  const up = new THREE.Vector3(0, 1, 0);
   
-  // Pick a random edge: 0=left, 1=right, 2=top, 3=bottom
+  // Pick a random edge: 0=left, 1=right, 2=behind-left, 3=behind-right
   const edge = Math.floor(Math.random() * 4);
   
-  // Distance from player (spawn relatively close, 15-40 units away)
-  const distance = 15 + Math.random() * 25;
-  
-  // Angle just outside frustum (FOV is 75, so half is ~37.5 degrees, add buffer)
-  const edgeAngle = (42 + Math.random() * 15) * Math.PI / 180; // 42-57 degrees from center
+  // Distance from player
+  const distance = 20 + Math.random() * 40;
   
   let position = new THREE.Vector3();
   
+  // FOV is 75 degrees, half is 37.5. We want to spawn OUTSIDE this.
+  // Spawn at 50-90 degrees from forward (well outside the ~37.5 degree half-FOV)
+  const sideAngle = (50 + Math.random() * 40) * Math.PI / 180;
+  
   switch (edge) {
-    case 0: // Left edge
+    case 0: // Left side (outside FOV)
       position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(distance))
-        .add(right.clone().multiplyScalar(-Math.tan(edgeAngle) * distance));
+        .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
+        .add(right.clone().multiplyScalar(-Math.sin(sideAngle) * distance));
       break;
-    case 1: // Right edge
+    case 1: // Right side (outside FOV)
       position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(distance))
-        .add(right.clone().multiplyScalar(Math.tan(edgeAngle) * distance));
+        .add(forward.clone().multiplyScalar(Math.cos(sideAngle) * distance))
+        .add(right.clone().multiplyScalar(Math.sin(sideAngle) * distance));
       break;
-    case 2: // Top edge
+    case 2: // Behind-left
       position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(distance))
-        .add(up.clone().multiplyScalar(Math.tan(edgeAngle) * distance * 0.6)); // Less vertical range
+        .add(forward.clone().multiplyScalar(-distance * 0.5))
+        .add(right.clone().multiplyScalar(-distance * 0.5));
       break;
-    case 3: // Bottom edge (rare, mostly ground)
+    case 3: // Behind-right
       position.copy(camera.position)
-        .add(forward.clone().multiplyScalar(distance))
-        .add(up.clone().multiplyScalar(-Math.tan(edgeAngle) * distance * 0.3));
+        .add(forward.clone().multiplyScalar(-distance * 0.5))
+        .add(right.clone().multiplyScalar(distance * 0.5));
       break;
   }
   
-  // Random height variation
-  position.y = 1 + Math.random() * 10;
+  // Random height (higher range)
+  position.y = 1 + Math.random() * 20;
   
   // Clamp to world bounds
   const bound = CONFIG.worldSize - 5;
   position.x = Math.max(-bound, Math.min(bound, position.x));
   position.z = Math.max(-bound, Math.min(bound, position.z));
-  
-  // If somehow on-screen, push it further out
-  if (!isPositionOffScreen(position)) {
-    const awayDir = position.clone().sub(camera.position).normalize();
-    position.add(awayDir.multiplyScalar(10));
-  }
   
   return position;
 }
