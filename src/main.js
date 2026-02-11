@@ -106,7 +106,7 @@ function drawVelocityGizmo() {
   // Draw velocity vector
   // lookVelocity.x = horizontal mouse movement (right = positive)
   // lookVelocity.y = vertical mouse movement (down = positive)
-  const scale = 3;
+  const scale = 15; // Increased sensitivity
   const velX = lookVelocity.x * scale;  // Horizontal: right is positive
   const velY = lookVelocity.y * scale;  // Vertical: down is positive
   
