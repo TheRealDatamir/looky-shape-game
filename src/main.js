@@ -52,6 +52,102 @@ const debugState = {
   lastDebugUpdate: 0
 };
 
+// Velocity tracking
+const lookVelocity = { x: 0, y: 0 };
+let lastCameraRotation = { x: 0, y: 0 };
+
+function updateLookVelocity() {
+  const currentRotation = {
+    x: camera.rotation.x,
+    y: camera.rotation.y
+  };
+  
+  // Raw velocity (change in rotation this frame)
+  const rawVelX = currentRotation.x - lastCameraRotation.x;
+  const rawVelY = currentRotation.y - lastCameraRotation.y;
+  
+  // Smooth it slightly (0.5 blend)
+  lookVelocity.x = lookVelocity.x * 0.5 + rawVelX * 0.5;
+  lookVelocity.y = lookVelocity.y * 0.5 + rawVelY * 0.5;
+  
+  lastCameraRotation.x = currentRotation.x;
+  lastCameraRotation.y = currentRotation.y;
+}
+
+// Velocity gizmo drawing
+const gizmoCanvas = document.getElementById('velocity-gizmo');
+const gizmoCtx = gizmoCanvas.getContext('2d');
+
+function drawVelocityGizmo() {
+  const width = gizmoCanvas.width;
+  const height = gizmoCanvas.height;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
+  // Clear
+  gizmoCtx.clearRect(0, 0, width, height);
+  
+  // Draw crosshair reference (subtle)
+  gizmoCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  gizmoCtx.lineWidth = 1;
+  gizmoCtx.beginPath();
+  gizmoCtx.moveTo(centerX - 30, centerY);
+  gizmoCtx.lineTo(centerX + 30, centerY);
+  gizmoCtx.moveTo(centerX, centerY - 30);
+  gizmoCtx.lineTo(centerX, centerY + 30);
+  gizmoCtx.stroke();
+  
+  // Draw velocity vector
+  // Scale up the velocity for visibility
+  const scale = 5000;
+  const velX = lookVelocity.y * scale; // Y rotation = horizontal movement
+  const velY = -lookVelocity.x * scale; // X rotation = vertical movement (inverted)
+  
+  // Clamp max length
+  const maxLen = 80;
+  const len = Math.sqrt(velX * velX + velY * velY);
+  let drawX = velX;
+  let drawY = velY;
+  if (len > maxLen) {
+    drawX = (velX / len) * maxLen;
+    drawY = (velY / len) * maxLen;
+  }
+  
+  // Draw the velocity line
+  gizmoCtx.strokeStyle = '#00ff00';
+  gizmoCtx.lineWidth = 3;
+  gizmoCtx.lineCap = 'round';
+  gizmoCtx.beginPath();
+  gizmoCtx.moveTo(centerX, centerY);
+  gizmoCtx.lineTo(centerX + drawX, centerY + drawY);
+  gizmoCtx.stroke();
+  
+  // Draw arrowhead if there's velocity
+  if (len > 5) {
+    const angle = Math.atan2(drawY, drawX);
+    const arrowSize = 10;
+    
+    gizmoCtx.beginPath();
+    gizmoCtx.moveTo(centerX + drawX, centerY + drawY);
+    gizmoCtx.lineTo(
+      centerX + drawX - arrowSize * Math.cos(angle - Math.PI / 6),
+      centerY + drawY - arrowSize * Math.sin(angle - Math.PI / 6)
+    );
+    gizmoCtx.moveTo(centerX + drawX, centerY + drawY);
+    gizmoCtx.lineTo(
+      centerX + drawX - arrowSize * Math.cos(angle + Math.PI / 6),
+      centerY + drawY - arrowSize * Math.sin(angle + Math.PI / 6)
+    );
+    gizmoCtx.stroke();
+  }
+  
+  // Draw center dot
+  gizmoCtx.fillStyle = '#00ff00';
+  gizmoCtx.beginPath();
+  gizmoCtx.arc(centerX, centerY, 4, 0, Math.PI * 2);
+  gizmoCtx.fill();
+}
+
 // ============================================
 // THREE.JS SETUP
 // ============================================
@@ -628,8 +724,9 @@ function updateDebugPanel() {
   if (now - debugState.lastDebugUpdate < 200) return;
   debugState.lastDebugUpdate = now;
   
-  document.getElementById('debug-vel-y').textContent = '-';
-  document.getElementById('debug-vel-x').textContent = '-';
+  // Scale velocities for readability
+  document.getElementById('debug-vel-y').textContent = (lookVelocity.y * 1000).toFixed(2);
+  document.getElementById('debug-vel-x').textContent = (lookVelocity.x * 1000).toFixed(2);
   document.getElementById('debug-spawn-dir').textContent = debugState.spawnEdge;
   document.getElementById('debug-on-screen').textContent = debugState.visibleCount;
   document.getElementById('debug-last-spawn').textContent = debugState.lastSpawnCount;
@@ -734,12 +831,14 @@ function animate() {
   const time = clock.getElapsedTime();
   
   if (state.isPlaying) {
+    updateLookVelocity();
     updateMovement(delta);
     updateShapeDensity();
     updateHeldShape();
     updateZoneDistance();
     animateShapes();
     updateDebugPanel();
+    drawVelocityGizmo();
   }
   
   animateCollectionZone(time);

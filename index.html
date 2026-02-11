@@ -236,6 +236,15 @@
     #debug-panel div {
       margin: 3px 0;
     }
+    
+    #velocity-gizmo {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 90;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -288,6 +297,8 @@
     <div>On Screen: <span id="debug-on-screen">0</span></div>
     <div>Last Spawn: <span id="debug-last-spawn">0</span></div>
   </div>
+  
+  <canvas id="velocity-gizmo" width="200" height="200"></canvas>
   
   <script type="module" src="/src/main.js"></script>
 </body>
