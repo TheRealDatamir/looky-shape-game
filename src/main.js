@@ -168,13 +168,13 @@ function createShapeGeometry(type) {
     case 'cube':
       return new THREE.BoxGeometry(2, 2, 2);
     case 'sphere':
-      return new THREE.SphereGeometry(1.2, 6, 4); // Low-poly sphere
+      return new THREE.SphereGeometry(1.2, 16, 16);
     case 'tetrahedron':
-      return new THREE.TetrahedronGeometry(1.5, 0); // Already low-poly
+      return new THREE.TetrahedronGeometry(1.5);
     case 'octahedron':
-      return new THREE.OctahedronGeometry(1.3, 0); // Already low-poly
+      return new THREE.OctahedronGeometry(1.3);
     case 'torus':
-      return new THREE.TorusGeometry(1, 0.4, 4, 6); // Low-poly torus
+      return new THREE.TorusGeometry(1, 0.4, 8, 16);
     default:
       return new THREE.BoxGeometry(2, 2, 2);
   }
@@ -193,7 +193,7 @@ function getRandomShapeType() {
   return types[0];
 }
 
-function spawnShape(initialSpawn = false) {
+function spawnShape(initialSpawn = false, nearPosition = null) {
   const type = getRandomShapeType();
   const config = CONFIG.shapeTypes[type];
   
@@ -201,8 +201,7 @@ function spawnShape(initialSpawn = false) {
   const material = new THREE.MeshStandardMaterial({
     color: config.color,
     roughness: 0.4,
-    metalness: 0.3,
-    flatShading: true // Low-poly look
+    metalness: 0.3
   });
   
   const mesh = new THREE.Mesh(geometry, material);
@@ -218,6 +217,9 @@ function spawnShape(initialSpawn = false) {
       1 + Math.random() * 20, // Float between 1-21 units high
       Math.sin(angle) * distance
     );
+  } else if (nearPosition) {
+    // Spawn near the old position (with some random offset, staying off-screen)
+    position = getNearbyOffscreenPosition(nearPosition);
   } else {
     // Runtime spawn: spawn just outside the screen edge (not far away)
     position = getEdgeSpawnPosition();
@@ -225,6 +227,11 @@ function spawnShape(initialSpawn = false) {
   
   mesh.position.copy(position);
   mesh.castShadow = true;
+  
+  // Shadow fade-in: start with no shadow, fade in over 5 seconds
+  mesh.userData.shadowFadeStart = performance.now();
+  mesh.userData.shadowFadeDuration = 5000; // 5 seconds
+  mesh.castShadow = false; // Start with shadow off
   
   mesh.rotation.set(
     Math.random() * Math.PI,
@@ -293,6 +300,35 @@ function isPositionOffScreen(position) {
   return !frustum.intersectsSphere(testSphere);
 }
 
+// Get a spawn position near an old position but still off-screen
+function getNearbyOffscreenPosition(oldPosition) {
+  // Try positions near the old one
+  for (let attempt = 0; attempt < 20; attempt++) {
+    // Random offset from old position (5-15 units away)
+    const offsetDist = 5 + Math.random() * 10;
+    const offsetAngle = Math.random() * Math.PI * 2;
+    
+    const position = new THREE.Vector3(
+      oldPosition.x + Math.cos(offsetAngle) * offsetDist,
+      1 + Math.random() * 20,
+      oldPosition.z + Math.sin(offsetAngle) * offsetDist
+    );
+    
+    // Clamp to world bounds
+    const bound = CONFIG.worldSize - 5;
+    position.x = Math.max(-bound, Math.min(bound, position.x));
+    position.z = Math.max(-bound, Math.min(bound, position.z));
+    
+    // Check if off-screen
+    if (isPositionOffScreen(position)) {
+      return position;
+    }
+  }
+  
+  // Fallback to edge spawn if can't find nearby off-screen spot
+  return getEdgeSpawnPosition();
+}
+
 // Get a spawn position just outside the screen edge
 function getEdgeSpawnPosition() {
   // Get camera direction vectors
@@ -357,14 +393,14 @@ function updateShapeVisibility() {
       shape.userData.seen = true;
     } else if (shape.userData.seen) {
       // Was seen, now not visible - mark for removal
-      shapesToRemove.push(shape);
+      shapesToRemove.push({ shape, position: shape.position.clone() });
     }
   }
   
-  // Remove shapes and spawn new ones
-  for (const shape of shapesToRemove) {
+  // Remove shapes and spawn new ones near their old positions
+  for (const { shape, position } of shapesToRemove) {
     removeShape(shape);
-    spawnShape();
+    spawnShape(false, position); // Spawn near old position
   }
 }
 
@@ -663,11 +699,34 @@ state.recipe = generateRecipe(1);
 updateRecipeUI();
 
 // Animate shapes
-function animateShapes(delta) {
+function animateShapes() {
+  const now = performance.now();
+  
   for (const shape of state.shapes) {
     shape.rotation.x += shape.userData.rotationSpeed.x;
     shape.rotation.y += shape.userData.rotationSpeed.y;
     shape.rotation.z += shape.userData.rotationSpeed.z;
+    
+    // Shadow fade-in
+    if (shape.userData.shadowFadeStart !== undefined) {
+      const elapsed = now - shape.userData.shadowFadeStart;
+      if (elapsed >= shape.userData.shadowFadeDuration) {
+        // Fade complete, enable shadow
+        shape.castShadow = true;
+        delete shape.userData.shadowFadeStart;
+        delete shape.userData.shadowFadeDuration;
+      }
+    }
+  }
+  
+  // Also update held shape shadow
+  if (state.heldShape && state.heldShape.userData.shadowFadeStart !== undefined) {
+    const elapsed = now - state.heldShape.userData.shadowFadeStart;
+    if (elapsed >= state.heldShape.userData.shadowFadeDuration) {
+      state.heldShape.castShadow = true;
+      delete state.heldShape.userData.shadowFadeStart;
+      delete state.heldShape.userData.shadowFadeDuration;
+    }
   }
 }
 
@@ -690,7 +749,7 @@ function animate() {
     updateShapeVisibility();
     updateHeldShape();
     updateZoneDistance();
-    animateShapes(delta);
+    animateShapes();
   }
   
   animateCollectionZone(time);
