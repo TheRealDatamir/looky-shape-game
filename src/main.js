@@ -10,7 +10,7 @@ const CONFIG = {
   playerHeight: 5,
   
   // Shapes
-  maxShapes: 50,
+  maxShapes: 100,
   spawnPadding: 10,
   
   // Shape types with rarity weights (higher = more common)
@@ -168,13 +168,13 @@ function createShapeGeometry(type) {
     case 'cube':
       return new THREE.BoxGeometry(2, 2, 2);
     case 'sphere':
-      return new THREE.SphereGeometry(1.2, 16, 16);
+      return new THREE.SphereGeometry(1.2, 6, 4); // Low-poly sphere
     case 'tetrahedron':
-      return new THREE.TetrahedronGeometry(1.5);
+      return new THREE.TetrahedronGeometry(1.5, 0); // Already low-poly
     case 'octahedron':
-      return new THREE.OctahedronGeometry(1.3);
+      return new THREE.OctahedronGeometry(1.3, 0); // Already low-poly
     case 'torus':
-      return new THREE.TorusGeometry(1, 0.4, 8, 16);
+      return new THREE.TorusGeometry(1, 0.4, 4, 6); // Low-poly torus
     default:
       return new THREE.BoxGeometry(2, 2, 2);
   }
@@ -201,7 +201,8 @@ function spawnShape(initialSpawn = false) {
   const material = new THREE.MeshStandardMaterial({
     color: config.color,
     roughness: 0.4,
-    metalness: 0.3
+    metalness: 0.3,
+    flatShading: true // Low-poly look
   });
   
   const mesh = new THREE.Mesh(geometry, material);
